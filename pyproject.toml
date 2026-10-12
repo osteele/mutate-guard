@@ -1,0 +1,31 @@
+[project]
+name = "mutate-guard"
+version = "0.1.0"
+description = "Apply one exact mutation, run a check, restore, and report a verdict that cannot lie"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+mutate-guard = "mutate_guard:entry"
+
+[dependency-groups]
+dev = [
+  "ruff>=0.12.8",
+  "ty>=0.0.71",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mutate_guard"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
