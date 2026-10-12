@@ -45,6 +45,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -71,17 +72,33 @@ BUILD_FAILURE_MARKERS = (
 #: mutation outside the check's scope.
 SUMMARY_PATTERNS = (
     re.compile(r"^ok\s+\S+", re.M),
-    re.compile(r"^test result:.*$", re.M),
+    re.compile(r"^test result:\s+.*?(?=;\s*finished in|$)", re.M),
     re.compile(r"^Ran \d+ tests?", re.M),
     re.compile(r"^\d+ passed", re.M),
 )
+
+
+def find_bash() -> str:
+    """Locate the bash executable, supporting standard Git for Windows locations."""
+    found = shutil.which("bash")
+    if found:
+        return found
+    if sys.platform == "win32":
+        for candidate in (
+            r"C:\Program Files\Git\bin\bash.exe",
+            r"C:\Program Files\Git\usr\bin\bash.exe",
+            r"C:\Program Files (x86)\Git\bin\bash.exe",
+        ):
+            if Path(candidate).is_file():
+                return candidate
+    return "bash"
 
 
 def run(command: str, cwd: Path) -> tuple[int, str]:
     """Run a check and return its own status, whichever pipeline stage failed."""
     with tempfile.TemporaryDirectory(prefix="mutate-guard-pycache-") as cache:
         finished = subprocess.run(
-            ["bash", "-o", "pipefail", "-c", command],
+            [find_bash(), "-o", "pipefail", "-c", command],
             cwd=cwd,
             capture_output=True,
             text=True,
@@ -123,11 +140,32 @@ def main() -> int:
     args = parser.parse_args()
 
     cwd = Path(args.cwd).resolve()
+    if not cwd.is_dir():
+        print(f"REFUSED  directory does not exist: {cwd}")
+        return 3
+
     path = Path(args.file)
     if not path.is_absolute():
         path = cwd / path
 
-    original = path.read_text()
+    if not path.is_file():
+        print(f"REFUSED  file does not exist: {path}")
+        return 3
+
+    if args.count <= 0:
+        print(f"REFUSED  --count must be positive, got {args.count}")
+        return 3
+
+    if not args.old:
+        print("REFUSED  --old cannot be empty.")
+        return 3
+
+    try:
+        original = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as err:
+        print(f"REFUSED  cannot read {path}: {err}")
+        return 3
+
     occurrences = original.count(args.old)
     if occurrences != args.count:
         print(f"REFUSED  --old occurs {occurrences} times, expected {args.count}: {path}")
@@ -149,20 +187,20 @@ def main() -> int:
 
     verdict = 1
     try:
-        path.write_text(mutated)
+        path.write_text(mutated, encoding="utf-8")
         print(f"$ {args.test}   (mutated)")
         status, output = run(args.test, cwd)
 
-        if looks_like_build_failure(output):
-            print("INVALID  the mutated source does not build; nothing was measured.")
-            print(output[-1500:])
-            verdict = 2
-        elif status == 0:
+        if status == 0:
             print("SURVIVED the check passes with the mutation applied.")
-            if scope_fingerprint(output) == baseline_scope:
+            if baseline_scope and scope_fingerprint(output) == baseline_scope:
                 print("WARNING  the mutated run reported the same tests as the baseline.")
                 print("         Check that the test target includes the mutated file.")
             verdict = 1
+        elif looks_like_build_failure(output):
+            print("INVALID  the mutated source does not build; nothing was measured.")
+            print(output[-1500:])
+            verdict = 2
         else:
             print(f"KILLED   the check fails with the mutation (exit {status}).")
             if args.expect_test and args.expect_test not in output:
@@ -177,13 +215,14 @@ def main() -> int:
                 print(f"         {line.strip()}")
             verdict = 0
     finally:
-        path.write_text(original)
-        if path.read_text() != original:
+        path.write_text(original, encoding="utf-8")
+        if path.read_text(encoding="utf-8") != original:
             print("ERROR    the file was not restored; inspect it by hand.")
             return 5
-        restored_status, _ = run(args.test, cwd)
+        restored_status, restored_output = run(args.test, cwd)
         if restored_status != 0:
             print(f"ERROR    the check fails after restoring (exit {restored_status}).")
+            print(restored_output[-2000:])
             return 5
         print("restored, and the check passes again.")
 
