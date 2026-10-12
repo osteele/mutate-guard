@@ -13,14 +13,34 @@ mutants but cannot target a specific semantic change.
 
 ```sh
 uv tool install --force --reinstall .   # or: just install
+mutate-guard --help                    # verify installation
 ```
 
 ## Usage
 
 ```sh
-mutate-guard --file src/x.rs --old 'a && b' --new 'a' --test 'cargo test -q'
+mutate-guard --file src/x.rs --old 'a && b' --new 'a' --test 'cargo test -q' \
              [--expect-test NAME] [--cwd DIR] [--count N]
 ```
+
+### Options
+
+- `--count N`: number of times `--old` must occur in the target file (default: 1).
+- `--cwd DIR`: directory to execute the check command in (default: current directory).
+- `--expect-test NAME`: name of the test expected to fail. If a different test caught the mutation, a warning is printed under KILLED.
+
+### Example output
+
+```
+$ cargo test -q   (baseline)
+$ cargo test -q   (mutated)
+KILLED   the check fails with the mutation (exit 101).
+         failures:
+             tests::test_guard - should panic
+restored, and the check passes again.
+```
+
+### Verdicts
 
 | Verdict | Exit | Meaning |
 |---|---|---|
