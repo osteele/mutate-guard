@@ -1,7 +1,7 @@
 """Apply one mutation, run a check, restore, and report a verdict that cannot lie.
 
 A guard is tested when breaking it breaks a check. Running that by hand is two
-edits and a test command, and it has four ways to report success while
+edits and a test command, and it has five ways to report success while
 measuring nothing:
 
   1. The mutation does not apply -- a pattern that matches nothing, or a
@@ -11,7 +11,11 @@ measuring nothing:
   3. The check runs a target that excludes the mutated file, so nothing
      relevant executes and the suite passes.
   4. The status is read through a pipe, so the last command in the pipeline
-     reports instead of the check.
+     reports instead of the check. Checks run under `bash -o pipefail`.
+  5. Python runs stale bytecode: it trusts a cached .pyc whose recorded source
+     mtime (whole seconds) and size match, so a same-size mutation applied or
+     restored within one second executes the other version. Each run gets its
+     own empty PYTHONPYCACHEPREFIX, and nothing is written into the tree.
 
 Each produces a false statement about the code: a present guard called missing,
 or a missing guard called present. This runs the sequence so none of them is
@@ -39,9 +43,11 @@ the verdict says so.
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 #: Substrings meaning the toolchain rejected the mutated source. A build
@@ -72,10 +78,15 @@ SUMMARY_PATTERNS = (
 
 
 def run(command: str, cwd: Path) -> tuple[int, str]:
-    """Run a check and return its own status, with no pipeline in between."""
-    finished = subprocess.run(
-        command, shell=True, cwd=cwd, capture_output=True, text=True
-    )
+    """Run a check and return its own status, whichever pipeline stage failed."""
+    with tempfile.TemporaryDirectory(prefix="mutate-guard-pycache-") as cache:
+        finished = subprocess.run(
+            ["bash", "-o", "pipefail", "-c", command],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            env={**os.environ, "PYTHONPYCACHEPREFIX": cache},
+        )
     return finished.returncode, finished.stdout + finished.stderr
 
 
